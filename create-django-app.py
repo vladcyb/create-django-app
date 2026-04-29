@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import os
 import shutil
 import subprocess
@@ -14,10 +15,6 @@ DEV_PACKAGES = ("black", "ruff")
 
 def run(cmd: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, check=check, text=True)
-
-
-def usage() -> None:
-    print("Usage: ./setup.py <folder_name>")
 
 
 def venv_dir() -> Path:
@@ -274,13 +271,22 @@ def print_activation_hint() -> None:
         print("Activate environment with: source .venv/bin/activate")
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="create-django-app.py",
+        description="Bootstrap a Django project in the target folder.",
+    )
+    parser.add_argument(
+        "folder_name",
+        help="Folder where the Django bootstrap will be created.",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
     global ROOT
-    if len(sys.argv) != 2:
-        usage()
-        sys.exit(1)
-
-    target_folder = Path(sys.argv[1])
+    args = parse_args()
+    target_folder = Path(args.folder_name)
     ROOT = (Path.cwd() / target_folder).resolve()
     print(f"Target folder: {ROOT}")
     ROOT.mkdir(parents=True, exist_ok=True)
