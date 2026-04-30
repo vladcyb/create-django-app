@@ -6,19 +6,59 @@ import os
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
-ROOT = Path.cwd()
 BASE_PACKAGES = ("Django", "gunicorn")
 DEV_PACKAGES = ("black", "ruff")
+SCRIPT_DIR = Path(__file__).resolve().parent
+TEMPLATES_DIR = SCRIPT_DIR / "templates"
+DOCKER_IMAGE = "python:3.12-slim-bookworm"
+CONTAINER_PROJECT_DIR = "/app"
+AUTO_COMMIT_MESSAGE = "Bootstrap Django project template"
+CREATE_DJANGO_COMMAND = (
+    "pip install --no-cache-dir Django gunicorn && django-admin startproject app ."
+)
+UV_SETUP_COMMAND_TEMPLATE = (
+    "pip install --no-cache-dir uv && "
+    "if [ ! -f pyproject.toml ]; then uv init --bare --python 3.12; fi && "
+    "uv add {base_packages} && "
+    "uv add --dev {dev_packages} && "
+    "uv lock"
+)
+
+@dataclass(frozen=True)
+class BootstrapConfig:
+    root: Path
+    docker_image: str = DOCKER_IMAGE
+    container_project_dir: str = CONTAINER_PROJECT_DIR
+    base_packages: tuple[str, ...] = BASE_PACKAGES
+    dev_packages: tuple[str, ...] = DEV_PACKAGES
+    auto_commit_message: str = AUTO_COMMIT_MESSAGE
 
 
+# subprocess helpers
 def run(cmd: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, check=check, text=True)
 
 
-def venv_dir() -> Path:
-    return ROOT / ".venv"
+def run_probe(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(cmd, text=True, capture_output=True)
+
+
+def build_uv_setup_command(config: BootstrapConfig) -> str:
+    return UV_SETUP_COMMAND_TEMPLATE.format(
+        base_packages=" ".join(config.base_packages),
+        dev_packages=" ".join(config.dev_packages),
+    )
+
+
+def read_template(name: str) -> str:
+    template_path = TEMPLATES_DIR / name
+    if not template_path.exists():
+        print(f"Error: template file is missing: {template_path}")
+        sys.exit(1)
+    return template_path.read_text(encoding="utf-8")
 
 
 def write_file_if_missing(path: Path, content: str) -> None:
@@ -29,229 +69,92 @@ def write_file_if_missing(path: Path, content: str) -> None:
     print(f"Created {path.name}.")
 
 
-def ensure_docker() -> None:
-    if shutil.which("docker") is None:
-        print("Error: docker is not installed or not found in PATH.")
-        sys.exit(1)
-    docker_running = subprocess.run(
-        ["docker", "info"],
-        text=True,
-        capture_output=True,
-    )
-    if docker_running.returncode != 0:
-        print("Error: docker is installed, but Docker daemon is not running.")
-        print("Start Docker Desktop (or docker service) and try again.")
-        sys.exit(1)
-
-
-def ensure_django_project() -> None:
-    ROOT.mkdir(parents=True, exist_ok=True)
-    if (ROOT / "manage.py").exists() or (ROOT / "app").is_dir():
-        print(
-            "Django project files already detected (manage.py/app). Skipping project creation."
-        )
-        return
-
-    ensure_docker()
-    print(f"Creating Django project in {ROOT} via Docker...")
+def run_in_project_container(config: BootstrapConfig, command: str) -> None:
     run(
         [
             "docker",
             "run",
             "--rm",
             "-v",
-            f"{ROOT}:/app",
+            f"{config.root}:{config.container_project_dir}",
             "-w",
-            "/app",
-            "python:3.12-slim-bookworm",
+            config.container_project_dir,
+            config.docker_image,
             "sh",
             "-c",
-            "pip install Django gunicorn && django-admin startproject app .",
-        ]
-    )
-    requirements_file = ROOT / "requirements.txt"
-    if not requirements_file.exists():
-        requirements_file.write_text("Django\ngunicorn\n", encoding="utf-8")
-        print("Created requirements.txt with base dependencies (Django, gunicorn).")
-
-
-def venv_python_path() -> Path:
-    venv = venv_dir()
-    windows_python = venv / "Scripts" / "python.exe"
-    unix_python = venv / "bin" / "python"
-    if windows_python.exists():
-        return windows_python
-    return unix_python
-
-
-def create_or_reuse_venv() -> Path:
-    venv = venv_dir()
-    if not venv.exists():
-        print(f"Creating virtual environment in {venv}...")
-        run([sys.executable, "-m", "venv", str(venv)])
-    else:
-        print("Virtual environment .venv already exists. Reusing it.")
-
-    vpython = venv_python_path()
-    if not vpython.exists():
-        print("Error: could not find venv python interpreter in .venv.")
-        sys.exit(1)
-
-    pip_check = subprocess.run([str(vpython), "-m", "pip", "--version"], text=True)
-    if pip_check.returncode != 0:
-        print("Existing .venv is incomplete (pip not available). Recreating...")
-        shutil.rmtree(venv, ignore_errors=True)
-        run([sys.executable, "-m", "venv", str(venv)])
-        vpython = venv_python_path()
-        if not vpython.exists():
-            print("Error: could not find venv python interpreter after recreation.")
-            sys.exit(1)
-
-    return vpython
-
-
-def install_dev_tools(vpython: Path) -> None:
-    print("Installing project and developer dependencies into .venv...")
-    run(
-        [
-            str(vpython),
-            "-m",
-            "pip",
-            "install",
-            "--upgrade",
-            "pip",
-            *BASE_PACKAGES,
-            *DEV_PACKAGES,
+            command,
         ]
     )
 
 
-def installed_version(vpython: Path, package: str) -> str:
-    result = subprocess.run(
-        [str(vpython), "-m", "pip", "show", package],
-        text=True,
-        capture_output=True,
-    )
-    if result.returncode != 0:
-        print(f"Error: could not detect installed version for {package}.")
+# environment checks
+def ensure_docker() -> None:
+    if shutil.which("docker") is None:
+        print("Error: docker is not installed or not found in PATH.")
         sys.exit(1)
-    for line in result.stdout.splitlines():
-        if line.startswith("Version: "):
-            return line.split(": ", 1)[1].strip()
-    print(f"Error: no version information found for {package}.")
-    sys.exit(1)
+    docker_running = run_probe(["docker", "info"])
+    if docker_running.returncode != 0:
+        print("Error: docker is installed, but Docker daemon is not running.")
+        print("Start Docker Desktop (or docker service) and try again.")
+        sys.exit(1)
 
 
-def write_pinned_requirements(vpython: Path) -> None:
-    base_lines = [
-        f"{name}=={installed_version(vpython, name)}" for name in BASE_PACKAGES
-    ]
-    dev_lines = [f"{name}=={installed_version(vpython, name)}" for name in DEV_PACKAGES]
+def ensure_django_project(config: BootstrapConfig) -> None:
+    config.root.mkdir(parents=True, exist_ok=True)
+    if (config.root / "manage.py").exists() or (config.root / "app").is_dir():
+        print(
+            "Django project files already detected (manage.py/app). Skipping project creation."
+        )
+        return
 
-    (ROOT / "requirements.txt").write_text(
-        "\n".join(base_lines) + "\n", encoding="utf-8"
-    )
-    print("Updated requirements.txt with pinned Django and gunicorn versions.")
-
-    (ROOT / "requirements.dev.txt").write_text(
-        "\n".join(dev_lines) + "\n", encoding="utf-8"
-    )
-    print("Updated requirements.dev.txt with pinned black and ruff versions.")
+    ensure_docker()
+    print(f"Creating Django project in {config.root} via Docker...")
+    run_in_project_container(config, CREATE_DJANGO_COMMAND)
 
 
-def ensure_docker_files() -> None:
+def ensure_uv_project_files(config: BootstrapConfig) -> None:
+    ensure_docker()
+    print("Generating pyproject.toml and uv.lock via Docker...")
+    run_in_project_container(config, build_uv_setup_command(config))
+
+
+# file generation
+def ensure_docker_files(config: BootstrapConfig) -> None:
     write_file_if_missing(
-        ROOT / "Dockerfile",
-        """FROM python:3.12-slim-bookworm
-
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-WORKDIR /app
-
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
-""",
+        config.root / "Dockerfile",
+        read_template("Dockerfile.template"),
     )
 
     write_file_if_missing(
-        ROOT / "compose.yml",
-        """services:
-  web:
-    build: .
-    command: python manage.py runserver 0.0.0.0:8000
-    ports:
-      - "8000:8000"
-    volumes:
-      - .:/app
-""",
+        config.root / "compose.yml",
+        read_template("compose.yml.template"),
     )
 
     write_file_if_missing(
-        ROOT / ".gitignore",
-        """# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-
-# Virtual environments
-.venv/
-venv/
-
-# Django
-db.sqlite3
-staticfiles/
-media/
-
-# Environment files
-.env
-.env.*
-
-# IDE/editor
-.idea/
-.vscode/
-""",
+        config.root / ".gitignore",
+        read_template("gitignore.template"),
     )
 
     write_file_if_missing(
-        ROOT / ".dockerignore",
-        """.git
-.gitignore
-.venv
-venv
-__pycache__
-*.py[cod]
-*.egg-info
-.idea
-.vscode
-db.sqlite3
-""",
+        config.root / ".dockerignore",
+        read_template("dockerignore.template"),
     )
 
 
-def try_auto_commit() -> None:
+# git operations
+def try_auto_commit(config: BootstrapConfig) -> None:
     if shutil.which("git") is None:
         print("Git is not installed. Skipping auto-commit.")
         return
 
     # Ensure we are inside a git work tree before running git commands.
     # If repository is missing, initialize it automatically.
-    inside_work_tree = subprocess.run(
-        ["git", "rev-parse", "--is-inside-work-tree"],
-        text=True,
-        capture_output=True,
-    )
+    inside_work_tree = run_probe(["git", "rev-parse", "--is-inside-work-tree"])
     if inside_work_tree.returncode != 0:
         print("Current directory is not a git repository. Initializing...")
         run(["git", "init"])
 
-    status = subprocess.run(
-        ["git", "status", "--porcelain"], text=True, capture_output=True
-    )
+    status = run_probe(["git", "status", "--porcelain"])
     if status.returncode != 0:
         print("Unable to read git status. Skipping auto-commit.")
         return
@@ -260,15 +163,12 @@ def try_auto_commit() -> None:
         return
 
     run(["git", "add", "."])
-    run(["git", "commit", "-m", "Bootstrap Django project template"])
-    print("Created git commit: Bootstrap Django project template")
+    run(["git", "commit", "-m", config.auto_commit_message])
+    print(f"Created git commit: {config.auto_commit_message}")
 
 
 def print_activation_hint() -> None:
-    if os.name == "nt":
-        print(r"Activate environment with: .\.venv\Scripts\activate")
-    else:
-        print("Activate environment with: source .venv/bin/activate")
+    print("Run locally with: uv sync && uv run python manage.py runserver")
 
 
 def parse_args() -> argparse.Namespace:
@@ -283,21 +183,21 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def run_bootstrap(config: BootstrapConfig) -> None:
+    print(f"Target folder: {config.root}")
+    config.root.mkdir(parents=True, exist_ok=True)
+    os.chdir(config.root)
+    ensure_django_project(config)
+    ensure_uv_project_files(config)
+    ensure_docker_files(config)
+    try_auto_commit(config)
+
+
 def main() -> None:
-    global ROOT
     args = parse_args()
-    target_folder = Path(args.folder_name)
-    ROOT = (Path.cwd() / target_folder).resolve()
-    print(f"Target folder: {ROOT}")
-    ROOT.mkdir(parents=True, exist_ok=True)
-    os.chdir(ROOT)
+    config = BootstrapConfig(root=(Path.cwd() / args.folder_name).resolve())
     try:
-        ensure_django_project()
-        vpython = create_or_reuse_venv()
-        install_dev_tools(vpython)
-        write_pinned_requirements(vpython)
-        ensure_docker_files()
-        try_auto_commit()
+        run_bootstrap(config)
     except subprocess.CalledProcessError as exc:
         cmd = " ".join(exc.cmd) if isinstance(exc.cmd, list) else str(exc.cmd)
         print(f"Error: command failed with exit code {exc.returncode}: {cmd}")
