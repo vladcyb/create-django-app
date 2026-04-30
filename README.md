@@ -24,3 +24,20 @@ or
 ```bash
 python create_django_app.py my-project
 ```
+
+## Run generated project with Docker
+
+After bootstrap finishes:
+
+```bash
+cd my-project
+docker compose up --build
+```
+
+Open `http://127.0.0.1:8000`.
+
+Create Django superuser (optional):
+
+```bash
+docker compose run --rm web python manage.py createsuperuser
+```

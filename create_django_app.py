@@ -36,7 +36,7 @@ CMD ["uv", "run", "python", "manage.py", "runserver", "0.0.0.0:8000"]
     "compose.yml.template": """services:
   web:
     build: .
-    command: python manage.py runserver 0.0.0.0:8000
+    command: sh -c "uv sync && uv run python manage.py runserver 0.0.0.0:8000"
     ports:
       - "8000:8000"
     volumes:
