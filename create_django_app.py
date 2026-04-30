@@ -16,6 +16,91 @@ TEMPLATES_DIR = SCRIPT_DIR / "templates"
 DOCKER_IMAGE = "python:3.12-slim-bookworm"
 CONTAINER_PROJECT_DIR = "/app"
 AUTO_COMMIT_MESSAGE = "Bootstrap Django project template"
+FALLBACK_TEMPLATES: dict[str, str] = {
+    "Dockerfile.template": """FROM python:3.12-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir uv
+
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev
+
+COPY . .
+
+CMD ["uv", "run", "python", "manage.py", "runserver", "0.0.0.0:8000"]
+""",
+    "compose.yml.template": """services:
+  web:
+    build: .
+    command: python manage.py runserver 0.0.0.0:8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+""",
+    "gitignore.template": """# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Packaging/build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Tool caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+
+# Django
+db.sqlite3
+db.sqlite3-journal
+media/
+staticfiles/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# IDE/editor
+.idea/
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+""",
+    "dockerignore.template": """.git
+.gitignore
+.venv
+venv
+__pycache__
+*.py[cod]
+*.egg-info
+.idea
+.vscode
+db.sqlite3
+""",
+}
 CREATE_DJANGO_COMMAND = (
     "pip install --no-cache-dir Django gunicorn && django-admin startproject app ."
 )
@@ -56,8 +141,14 @@ def build_uv_setup_command(config: BootstrapConfig) -> str:
 def read_template(name: str) -> str:
     template_path = TEMPLATES_DIR / name
     if not template_path.exists():
-        print(f"Error: template file is missing: {template_path}")
-        sys.exit(1)
+        fallback_content = FALLBACK_TEMPLATES.get(name)
+        if fallback_content is None:
+            print(f"Error: template file is missing: {template_path}")
+            sys.exit(1)
+        print(
+            f"Warning: template file is missing on disk, using built-in fallback for {name}."
+        )
+        return fallback_content
     return template_path.read_text(encoding="utf-8")
 
 
