@@ -10,7 +10,7 @@ CLI tool that bootstraps a Django project and generates `pyproject.toml` and `uv
 ## One-command run from GitHub
 
 ```bash
-py -m uv tool run --from git+https://github.com/vladcyb/create-django-app.git create-django-app my-project
+py -m uv tool run --from "git+https://github.com/vladcyb/create-django-app.git@master" create-django-app my-project
 ```
 
 ## Local development usage
