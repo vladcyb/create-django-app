@@ -5,7 +5,7 @@ CLI tool that bootstraps a Django project and generates `pyproject.toml` and `uv
 ## Requirements
 
 - Docker running locally
-- `uv` installed (for `uvx` usage)
+- `uv` installed (only for `uvx` one-command запуск)
 
 ## One-command run from GitHub
 
@@ -36,8 +36,26 @@ docker compose up --build
 
 Open `http://127.0.0.1:8000`.
 
+Run migrations:
+
+```bash
+docker compose run --rm web uv run python manage.py migrate
+```
+
+Run tests:
+
+```bash
+docker compose run --rm web uv run python manage.py test
+```
+
 Create Django superuser (optional):
 
 ```bash
-docker compose run --rm web python manage.py createsuperuser
+docker compose run --rm web uv run python manage.py createsuperuser
+```
+
+Stop containers:
+
+```bash
+docker compose down
 ```

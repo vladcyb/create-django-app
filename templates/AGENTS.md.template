@@ -1,0 +1,17 @@
+# AGENTS
+
+## Project Context
+- Framework: Django
+- Python version: 3.12
+- Package manager: uv
+
+## Development Commands
+- Start app: `docker compose up --build`
+- Run migrations: `docker compose run --rm web uv run python manage.py migrate`
+- Run tests: `docker compose run --rm web uv run python manage.py test`
+- Stop stack: `docker compose down`
+
+## Notes for Agents
+- Prefer minimal, focused changes.
+- Keep generated and committed files deterministic.
+- Follow existing project structure and conventions.

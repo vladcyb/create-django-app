@@ -229,6 +229,11 @@ def ensure_docker_files(config: BootstrapConfig) -> None:
         read_template("dockerignore.template"),
     )
 
+    write_file_if_missing(
+        config.root / "AGENTS.md",
+        read_template("AGENTS.md.template"),
+    )
+
 
 def try_auto_commit(config: BootstrapConfig) -> None:
     if shutil.which("git") is None:
@@ -254,7 +259,7 @@ def try_auto_commit(config: BootstrapConfig) -> None:
 
 
 def print_activation_hint() -> None:
-    print("Run locally with: uv sync && uv run python manage.py runserver")
+    print("Run with Docker: docker compose up --build")
 
 
 def parse_args() -> argparse.Namespace:
